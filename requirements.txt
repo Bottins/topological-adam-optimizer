@@ -1,0 +1,9 @@
+﻿# Topological-Adam Optimizer - requirements
+# Install CPU or GPU PyTorch from https://pytorch.org/get-started/locally/
+torch>=2.2
+numpy>=1.24
+matplotlib>=3.7
+networkx>=3.1
+
+# Optional (used in some tests/examples)
+# torch-geometric>=2.4

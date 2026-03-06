@@ -1,0 +1,47 @@
+﻿\documentclass[11pt,a4paper]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath,amssymb}
+\title{Topology-Aware Adaptive Optimization for Graph Learning}
+\author{Open-Source Research Note}
+\date{}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+We summarize a topology-aware variant of Adam where effective learning rates depend on graph structural indicators. The objective is to improve optimization stability across heterogeneous graph regimes.
+\end{abstract}
+
+\section{Problem Statement}
+For parameters $\theta$ trained on graph-structured data $G=(V,E)$, standard Adam updates are
+\[
+\theta_{t+1}=\theta_t-\eta\,\frac{\hat{m}_t}{\sqrt{\hat{v}_t}+\epsilon}.
+\]
+We seek graph-conditioned scaling $s_t(G)$ and optional node-local weights $w_v(G)$ to modulate updates:
+\[
+\theta_{t+1}=\theta_t-\eta\,s_t(G)\,\frac{\hat{m}_t}{\sqrt{\hat{v}_t}+\epsilon}.
+\]
+
+\section{Formalization}
+Define a topological relevance function (TRF),
+\[
+\mathrm{TRF}(G)=1+\mu_G\,\Phi(G),
+\]
+where $\Phi$ combines normalized structural statistics (e.g., connectivity, efficiency, path length). Global scaling may use
+\[
+s_t(G)=\mathrm{TRF}(G)^{-1}.
+\]
+For local scaling on node-indexed gradients, define $w_v\propto g(\deg(v),\mathrm{homophily}(v),\ldots)$ and apply weighted aggregation before the optimizer step.
+
+\section{Research Contribution}
+The project offers an open-source implementation and synthetic graph benchmarks to study when topological adaptation modifies convergence speed and terminal loss versus standard adaptive optimizers.
+
+\begin{thebibliography}{9}
+\bibitem{kingma2015} D. P. Kingma, J. Ba, ``Adam: A Method for Stochastic Optimization,'' \emph{ICLR}, 2015.
+\bibitem{reddi2018} S. Reddi et al., ``On the Convergence of Adam and Beyond,'' \emph{ICLR}, 2018.
+\bibitem{kipf2017} T. Kipf, M. Welling, ``Semi-Supervised Classification with Graph Convolutional Networks,'' \emph{ICLR}, 2017.
+\bibitem{newman2010} M. Newman, \emph{Networks: An Introduction}, Oxford Univ. Press, 2010.
+\bibitem{paszke2019} A. Paszke et al., ``PyTorch: An Imperative Style, High-Performance Deep Learning Library,'' \emph{NeurIPS}, 2019.
+\end{thebibliography}
+
+\end{document}
