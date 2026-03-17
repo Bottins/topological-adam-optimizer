@@ -217,7 +217,7 @@ v_t = β2 · v_{t-1} + (1 - β2) · (∇L(θ_{t-1}))²
 If using TAdam in academic work, please cite:
 
 ```bibtex
-@software{bottini2026tadam,
+@software{bottino2026tadam,
   author = {Bottino, Alessandro},
   title = {Topological Adam Optimizer: Topology-Aware Learning Rate Scaling for Graph Neural Networks},
   year = {2026},
