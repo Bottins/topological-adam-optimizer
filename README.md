@@ -218,7 +218,7 @@ If using TAdam in academic work, please cite:
 
 ```bibtex
 @software{bottini2026tadam,
-  author = {Bottini, Alessandro},
+  author = {Bottino, Alessandro},
   title = {Topological Adam Optimizer: Topology-Aware Learning Rate Scaling for Graph Neural Networks},
   year = {2026},
   url = {https://github.com/Bottins/topological-adam-optimizer}
@@ -238,6 +238,6 @@ Open-source for research and educational purposes. Not recommended for productio
 
 ---
 
-**Author**: Alessandro Bottini
+**Author**: Alessandro Bottino
 **Last Updated**: March 2026
 **Repository**: [github.com/Bottins/topological-adam-optimizer](https://github.com/Bottins/topological-adam-optimizer)
