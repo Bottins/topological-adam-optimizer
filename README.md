@@ -1,231 +1,133 @@
-# Topological Adam Optimizer (TAdam)
+﻿# TAdam: Topologically-informed Adam
 
-## Overview
+Experimental PyTorch implementation accompanying **TAdam: Topologically-informed Adaptive Optimization for Graph Neural Networks**, by Alessandro Bottino, Salvatore Cuomo, and Vincenzo Vocca.
 
-An experimental PyTorch optimizer that extends the Adam algorithm with topology-aware learning rate scaling based on graph structural metrics. TAdam dynamically adjusts per-parameter learning rates by incorporating node centrality, degree distribution, and spectral graph properties, making it particularly suited for Graph Neural Networks (GNNs) and structured data learning.
+The synthetic study motivates topology-informed optimization as a promising research direction. The limited Cora experiment gives mixed results. Systematic validation across real-world datasets, seeds, and architectures remains future work; these experiments do not demonstrate mitigation of over-squashing or over-smoothing.
 
-## Key Features
+Repository: [Bottins/topological-adam-optimizer](https://github.com/Bottins/topological-adam-optimizer). A link to the published proceeding will be added when its DOI becomes available.
 
-- **Topology-Aware Optimization**: Learning rate modulation based on graph-theoretic metrics (degree centrality, betweenness, spectral gap)
-- **Adaptive Parameter Scaling**: Per-node learning rate adjustment reflecting structural importance in the graph
-- **GNN-Optimized**: Designed for Graph Neural Networks where node importance varies by topological position
-- **Backward Compatible**: Drop-in replacement for standard Adam optimizer with optional topology features
-- **Benchmarking Suite**: Comprehensive tests on synthetic graphs (Erdős-Rényi, Barabási-Albert, Stochastic Block Models)
+## What this code implements
 
-## Motivation
+The public class is `TAdam`, imported from `tadam.py`. It extends PyTorch Adam with:
 
-Standard optimizers like Adam treat all parameters uniformly, ignoring the underlying structure of graph data. In GNNs:
-- **Central nodes** (high degree/betweenness) may require conservative updates to preserve global structure
-- **Peripheral nodes** can tolerate aggressive exploration
-- **Community hubs** benefit from specialized learning dynamics
+- A global graph-dependent multiplier, computed from connectivity, efficiency, and path-length statistics.
+- Optional local weights based on degree, embedding homophily, degree-based Forman-like curvature, or their combination.
+- Periodic topology refresh and an explicit `update_graph(...)` method.
 
-TAdam addresses this by computing a topological scaling factor `τ(v)` for each node `v`:
+This repository retains the experimental update used in the Cora run. It is **not a complete implementation of the manuscript equations**:
 
-```
-τ(v) = f(degree(v), centrality(v), local_clustering(v))
-```
+| Component | Repository behavior |
+|---|---|
+| Global learning rate | `lr * (0.01 + 0.99 ** (-(TRF - 1)))`; differs from the manuscript's `lr / TRF`. Even TRF=1 gives 1.01 after refresh. |
+| TRF | Uses the code's capped/normalized terms; skips algebraic connectivity on disconnected graphs. |
+| Degree weights | Inverse `degree + 1`, min-max scaling, then mean normalization. |
+| Homophily weights | Neighbor cosine similarities, z-score, sigmoid, then mean normalization. |
+| Curvature weights | Mean incident `4 - degree(u) - degree(v)`, z-score, inverted sigmoid, then mean normalization. |
+| Combined weights | Product by default; `sum` and `weighted_sum` are also available. |
+| Local gradient scaling | Applied only when a gradient's first dimension equals the number of nodes. This shape check is not a semantic node-to-parameter mapping. |
 
-The effective learning rate becomes: `lr_eff(v) = lr_base × τ(v)`
+Shared GCN weights normally do not have a node dimension. Consequently, unadapted `OnlyTRF` and `Combined` produce identical outputs in the recorded Cora experiment. The explicit loss adapters in `benchmark_cora.py` apply local weights to training-node losses instead. Homophily is computed each epoch from detached hidden embeddings before dropout. These adapters also differ from the manuscript formulation.
 
-## Technical Approach
-
-### Topological Metrics
-
-TAdam computes the following graph properties:
-
-1. **Degree Centrality**: `deg(v) / (n - 1)`
-2. **Betweenness Centrality**: Number of shortest paths passing through node `v`
-3. **Local Clustering Coefficient**: Triangle density in node neighborhood
-4. **Spectral Properties**: Eigenvalues of graph Laplacian (optional, for global structure)
-
-### Scaling Function
-
-The default scaling function is:
-
-```python
-τ(v) = α × degree_norm(v) + β × betweenness_norm(v) + γ
-```
-
-Where `α`, `β`, `γ` are hyperparameters (default: `α=0.5`, `β=0.3`, `γ=0.2`).
-
-### Integration with Adam
-
-TAdam modifies the standard Adam update rule:
-
-```python
-# Standard Adam
-θ_t = θ_{t-1} - lr × m_t / (√v_t + ε)
-
-# Topological Adam
-θ_t = θ_{t-1} - lr × τ(node) × m_t / (√v_t + ε)
-```
-
-## Project Structure
-
-```
-topological-adam-optimizer/
-├── tadam.py                # Core TAdam optimizer implementation
-├── test_tadam.py           # Benchmark suite on synthetic graphs
-├── Adam_v/                 # Reference Adam variants for comparison
-│   ├── adam_standard.py
-│   ├── adam_amsgrad.py
-│   └── adam_decoupled.py
-├── requirements.txt
-└── README.md
-```
+The default `local_scaling='none'` means **global scaling only when graph data is supplied**. Use `graph_data=None` for ordinary Adam behavior. With the default update frequency, the first topology refresh is at step 10; on Cora the adaptive interval then becomes 30 steps. The static TRF is cached in the benchmark without changing that schedule.
 
 ## Installation
 
+Use Python 3.10 or newer. The recorded Cora run was executed with Python 3.12, PyTorch 2.14.0+cu130 and PyG 2.8.0.post1, on CPU. Exact installed package versions are recorded alongside the results; other versions have not been verified for identical metrics.
+
 ```bash
-pip install -r requirements.txt
+python -m venv .venv
+# Activate .venv using your shell's activation command.
+python -m pip install -r requirements-cora.txt
 ```
 
-**Requirements**:
-- PyTorch ≥ 1.10.0
-- torch-geometric ≥ 2.0.0 (optional, for GNN models)
-- NetworkX ≥ 2.6 (for graph metrics)
-- NumPy, Matplotlib
+For optimizer use and the legacy synthetic demo without Cora, `requirements.txt` is sufficient. SciPy and NetworkX support graph metrics. PyG is required for Cora. The first Cora run downloads the public Planetoid data and needs network access.
 
-## Usage
-
-### Basic Example
+## Minimal optimizer example
 
 ```python
 import torch
-from tadam import TAdamOptimizer
-from torch_geometric.data import Data
+from tadam import TAdam
 
-# Create a simple graph
-edge_index = torch.tensor([[0, 1, 1, 2], [1, 0, 2, 1]], dtype=torch.long)
-x = torch.randn(3, 16)  # 3 nodes, 16 features
-data = Data(x=x, edge_index=edge_index)
-
-# Initialize model and optimizer
-model = YourGNNModel()
-optimizer = TAdamOptimizer(
-    model.parameters(),
-    lr=0.01,
-    graph=data,  # Pass graph structure
-    topology_weight=0.5  # Balance between topology and standard Adam
+# Undirected graph: include both directions for each edge.
+edge_index = torch.tensor([[0, 1, 1, 2], [1, 0, 2, 1]])
+node_embeddings = torch.nn.Parameter(torch.randn(3, 8))
+optimizer = TAdam(
+    [node_embeddings], lr=0.01,
+    graph_data=(edge_index, 3),
+    local_scaling='degree', topology_update_freq=1,
 )
-
-# Training loop
-for epoch in range(100):
-    optimizer.zero_grad()
-    out = model(data)
-    loss = criterion(out, labels)
-    loss.backward()
-    optimizer.step()
+optimizer.zero_grad()
+loss = node_embeddings.square().mean()
+loss.backward()
+optimizer.step()
 ```
 
-### Hyperparameters
+This example deliberately uses node-indexed parameters. For shared GCN weights, use the explicit benchmark loss adapters rather than assuming that optimizer weights automatically map to nodes.
 
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `lr` | 0.001 | Base learning rate |
-| `betas` | (0.9, 0.999) | Adam momentum coefficients |
-| `eps` | 1e-8 | Numerical stability constant |
-| `topology_weight` | 0.5 | Weight of topological scaling (0=standard Adam, 1=full topology) |
-| `alpha` | 0.5 | Degree centrality weight |
-| `beta` | 0.3 | Betweenness centrality weight |
-| `gamma` | 0.2 | Bias term for scaling |
+Supported local modes are `none`, `Only_TRFscale`, `degree`, `homophily`, `curvature`, and `combined`. For homophily, provide `node_features` in the graph dictionary or assign current detached embeddings to `optimizer.node_features`. Node features are not updated automatically by the optimizer.
 
-## Benchmarking
+## Cora: 200 epochs
 
-Run the included benchmark suite:
+From the repository root:
+
+```bash
+python benchmark_cora.py --seeds 2025
+```
+
+The script evaluates all seven methods using the public split (140 training, 500 validation, 1,000 test nodes), normalized input features, a two-layer GCN with 16 hidden units, ReLU and dropout 0.5, learning rate 0.01, and weight decay 0.0005 on all parameters. Each method starts from the same seed and initialization. Test metrics are measured in evaluation mode after the 200th update, without early stopping or checkpoint selection. Weighted losses are used only for training; reported test loss is unweighted cross-entropy.
+
+The protocol was reconstructed because the earlier Cora script and its original seed were unavailable. These are the new measured results used in the revised manuscript:
+
+| Method | Test accuracy (%) | Test loss |
+|---|---:|---:|
+| Adam | 80.20 | 0.79314 |
+| TAdam-OnlyTRF | 80.10 | 0.76971 |
+| TAdam-Combined | 80.10 | 0.76971 |
+| Adapted-repository-degree | 79.40 | 0.79308 |
+| Adapted-repository-homophily | 80.40 | 0.76504 |
+| Adapted-repository-curvature | 79.80 | 0.76620 |
+| Adapted-repository-combined | 79.40 | 0.79147 |
+
+The homophily adapter exceeds Adam by 0.20 percentage points in this single run. Other variants have lower accuracy; a single seed does not establish statistical significance or general superiority.
+
+See [recorded results](results/cora_2025/results.csv), [protocol and source hashes](results/cora_2025/protocol.json), and [verification notes](results/cora_2025/README.md). The script checks exact equality of the unadapted OnlyTRF and Combined outputs.
+
+New runs default to `results/cora_run/`. Existing results are not overwritten; choose another directory for another run:
+
+```bash
+python benchmark_cora.py --seeds 2025 2026 2027 --output results/cora_multiseed
+```
+
+This command is an example of future evaluation, not a claim that these additional runs have been performed. Use `--data PATH` to reuse an existing Planetoid cache. The benchmark writes one CSV row per method and seed, plus its configuration, versions, and source hashes.
+
+## Synthetic experiments and curvature
+
+The revised chapter discusses complete, star, path, barbell, and two Erdos-Renyi graph families. These controlled, small-graph experiments are proof-of-concept evidence, not validation of deployment performance.
+
+`test_tadam.py` is a **legacy synthetic demonstration**, not an assertion-based test suite or an exact reproduction of the manuscript figures. It uses its own mean-aggregation `SimpleGNN`, learning rate 0.01, 100 epochs and two trials in the main routine. The manuscript reports a different nominal learning rate; the original synthetic experiment provenance still needs reconciliation. Paired trial seeding has now been fixed, so rerunning this demo need not recreate old figures. Importing the module no longer launches experiments.
 
 ```bash
 python test_tadam.py
 ```
 
-This executes comparative tests on:
-- **Erdős-Rényi graphs** (random networks)
-- **Barabási-Albert graphs** (scale-free networks)
-- **Stochastic Block Models** (community-structured graphs)
+The demo displays plots and saves them together in `figs/`, including the combined comparison and the individual graph plots. Its bands are standard deviations, not confidence intervals. The images currently included in `figs/` are historical synthetic figures, not evidence for the new Cora run; running the demo will replace them.
 
-**Output**: `tadam_comparison.png` with convergence curves comparing TAdam vs. standard Adam variants.
+For the barbell with two 25-node cliques, bridge endpoints have degree 25 and regular clique nodes degree 24. Average incident curvatures are -45.04 and -44 - 1/24 respectively. These fixed, degree-derived values are distinct but do not establish general bottleneck detection. The manuscript's OnlyTRF result supports a contribution from global scaling without establishing dominance over local mechanisms.
 
-### Typical Results
+## Verification
 
-| Graph Type | TAdam Convergence | Standard Adam Convergence | Speedup |
-|------------|-------------------|---------------------------|---------|
-| Erdős-Rényi (n=100, p=0.1) | 45 epochs | 68 epochs | **1.5x** |
-| Barabási-Albert (n=100, m=3) | 52 epochs | 71 epochs | **1.37x** |
-| SBM (2 communities) | 38 epochs | 59 epochs | **1.55x** |
-
-*Note: "Convergence" defined as reaching 95% of final accuracy.*
-
-## When to Use TAdam
-
-**Recommended**:
-- Graph Neural Networks (GCN, GAT, GraphSAGE)
-- Node classification/regression on heterogeneous graphs
-- Tasks where node importance varies significantly by topology
-- Community detection and graph clustering
-
-**Not Recommended**:
-- Standard CNNs/RNNs (no graph structure)
-- Fully connected networks (uniform topology)
-- Very small graphs (n < 20 nodes)
-
-## Research Profile
-
-- **Keywords**: Graph optimization, adaptive learning rates, topology-aware training, GNN optimization, graph neural networks, centrality-based scaling
-- **Domain**: Deep learning methodology, graph machine learning
-- **Contribution**: Novel optimizer design integrating graph theory into gradient descent
-- **Status**: Experimental research implementation (not production-ready)
-
-## Mathematical Formulation
-
-For full derivation and theoretical analysis, see:
-
-**Topological Scaling Factor**:
-
-```
-τ(v) = α · C_deg(v) + β · C_bet(v) + γ
-
-where:
-  C_deg(v) = deg(v) / max_u deg(u)  # Normalized degree
-  C_bet(v) = betweenness(v) / max_u betweenness(u)  # Normalized betweenness
+```bash
+python -m unittest discover -s tests -v
 ```
 
-**Update Rule**:
+Regression checks cover Adam equivalence without graph data, the default global-only mode, scalar gradients, edgeless homophily, graph refresh, invalid options, and safe import/basic execution of the legacy demo. The full Cora run separately verifies all seven 200-epoch configurations.
 
-```
-m_t = β1 · m_{t-1} + (1 - β1) · ∇L(θ_{t-1})
-v_t = β2 · v_{t-1} + (1 - β2) · (∇L(θ_{t-1}))²
-θ_t = θ_{t-1} - η · τ(node(θ)) · m_t / (√v_t + ε)
-```
+## Scope and future work
 
-## Future Work
+Priorities are matched implementation ablations, multiple seeds, validation-selected checkpoints, more datasets and architectures, and runtime/memory measurements. Topological metric computation can be expensive on larger graphs. The current code retains experimental normalization and scaling choices; exact equivalence to Adam on complete graphs is not claimed for this implementation. Direct diagnostics are needed before claiming effects on over-squashing or over-smoothing.
 
-- **Spectral Integration**: Incorporate graph Laplacian eigenvalues for global structure awareness
-- **Dynamic Topology**: Update topological metrics during training for evolving graphs
-- **Theoretical Guarantees**: Convergence analysis and regret bounds
-- **Multi-Graph Extension**: Support for batch training across multiple graphs
-- **Hyperparameter Tuning**: Automated search for optimal `α`, `β`, `γ`
+`Adam_v/` contains historical optimizer reference files and is not used by the Cora benchmark. All included images are collected in `figs/`.
 
-## Limitations
+No license file was supplied in this snapshot; this README does not introduce or change licensing terms.
 
-- **Computational Overhead**: Centrality computation scales as O(n²) for betweenness
-- **Static Graphs**: Current implementation assumes fixed topology
-- **Hyperparameter Sensitivity**: Performance depends on `α`, `β`, `γ` tuning
-- **Experimental Status**: Not extensively tested on large-scale production tasks
-
-
-## Acknowledgments
-
-Inspired by:
-- **Adam**: Kingma & Ba (2014), "Adam: A Method for Stochastic Optimization"
-- **GNN Optimization**: Velickovic et al. (2018), "Graph Attention Networks"
-- **Centrality Measures**: NetworkX library for efficient graph metrics
-
-## License
-
-Open-source for research and educational purposes. Not recommended for production deployment without further validation.
-
----
-
-**Author**: Alessandro Bottino
-**Last Updated**: March 2026
-**Repository**: [github.com/Bottins/topological-adam-optimizer](https://github.com/Bottins/topological-adam-optimizer)
+Maintainer: [Bottins](https://github.com/Bottins) (Alessandro Bottino). Last revised: October 2026.

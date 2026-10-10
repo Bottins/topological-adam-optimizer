@@ -1,0 +1,12 @@
+{
+  "python": "3.12.14",
+  "platform": "Windows-11-10.0.26300-SP0",
+  "packages": {
+    "torch": "2.14.0+cu130",
+    "torch-geometric": "2.8.0.post1",
+    "numpy": "2.5.3",
+    "scipy": "1.18.1",
+    "networkx": "3.6.1",
+    "matplotlib": "3.11.2"
+  }
+}

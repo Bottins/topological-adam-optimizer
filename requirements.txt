@@ -4,6 +4,6 @@ torch>=2.2
 numpy>=1.24
 matplotlib>=3.7
 networkx>=3.1
+scipy>=1.10
 
-# Optional (used in some tests/examples)
-# torch-geometric>=2.4
+# For the Cora benchmark, install requirements-cora.txt as well.

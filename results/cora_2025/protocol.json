@@ -1,0 +1,22 @@
+{
+  "seeds": [
+    2025
+  ],
+  "hidden": 16,
+  "lr": 0.01,
+  "weight_decay": 0.0005,
+  "data": "../data",
+  "output": "results/cora_2025",
+  "epochs": 200,
+  "device": "cpu",
+  "torch": "2.14.0+cu130",
+  "pyg": "2.8.0.post1",
+  "trf": 16.408224656052,
+  "status": "reconstructed protocol; original seed and adapters unavailable",
+  "protocol": "GCN-ReLU-dropout(0.5)-GCN; normalized features; weight decay on all parameters; final epoch; no checkpoint selection; adapted loss = mean(node_weight * node_loss) on training nodes; homophily from detached pre-dropout hidden embeddings each epoch; static TRF cached, repository update schedule preserved",
+  "source_hash_format": "sha256 of UTF-8 source with LF line endings",
+  "source_hashes": {
+    "tadam.py": "43419535c2f7885ee2dc9d87c0b5ff9e493cc1c251a8139e1746dc873a8d1094",
+    "benchmark_cora.py": "0b8b877f49a17388d8c945b41d664f6d5c56a643c0b7968a80b793f0b2355846"
+  }
+}

@@ -36,6 +36,8 @@ class TopologyMetrics:
     """Compute and cache topological metrics for graphs."""
     
     def __init__(self, update_frequency: int = 10, adaptive_frequency: bool = True):
+        if update_frequency < 1:
+            raise ValueError('update_frequency must be positive')
         self.update_frequency = update_frequency
         self.adaptive_frequency = adaptive_frequency
         self.base_frequency = update_frequency
@@ -244,6 +246,8 @@ class TopologyMetrics:
     
         # Media locale
         mask = counts > 0
+        if not torch.any(mask):
+            return torch.ones(num_nodes, device=device)
         homophily_scores[mask] = homophily_scores[mask] / counts[mask]
     
         # Se tutti identici → niente informazione utile
@@ -362,9 +366,13 @@ class TAdam(Adam):
     """
     Topologically-informed Adam optimizer for Graph Neural Networks.
     
-    Extends Adam with:
-    - Global learning rate scaling based on graph topology (TRF)
-    - Local gradient weighting based on node properties
+    Repository implementation, retained for reproducibility.
+
+    Global multiplier: 0.01 + 0.99 ** (-(TRF - 1)), NOT 1 / TRF.
+    Local weights affect only gradients whose first dimension is num_nodes.
+    Shared GCN parameters normally do not meet this condition; see the loss
+    adapters in benchmark_cora.py. With graph_data=None this delegates to Adam.
+    This class is not a complete implementation of the manuscript equations.
     """
     
     def __init__(
@@ -378,7 +386,7 @@ class TAdam(Adam):
         *,
         graph_data: Optional[Union[Tuple[Tensor, int], Dict[str, Any]]] = None,
         trf_weights: Optional[Dict[str, float]] = None,
-        local_scaling: str = 'none',  # 'none', 'degree', 'homophily', 'curvature', 'combined'
+        local_scaling: str = 'none',  # 'none', 'Only_TRFscale', 'degree', 'homophily', 'curvature', 'combined'
         topology_update_freq: int = 10,
         adaptive_frequency: bool = True,
         combination_method: str = 'product',
@@ -419,6 +427,12 @@ class TAdam(Adam):
             differentiable=differentiable, fused=fused
         )
         
+        valid_scaling = {'none', 'Only_TRFscale', 'degree', 'homophily', 'curvature', 'combined'}
+        if local_scaling not in valid_scaling:
+            raise ValueError(f'Unknown local_scaling method: {local_scaling}')
+        if combination_method not in {'product', 'sum', 'weighted_sum'}:
+            raise ValueError(f'Unknown combination method: {combination_method}')
+
         # Initialize topology components
         self.metrics = TopologyMetrics(topology_update_freq, adaptive_frequency)
         self.graph_data = graph_data
@@ -454,8 +468,9 @@ class TAdam(Adam):
         """Update graph data for dynamic graphs."""
         self.graph_data = graph_data
         self._process_graph_data()
-        # Force metric update on next step
-        self.metrics._step_count = 0
+        # step() increments the counter before checking the update interval.
+        # Schedule a refresh immediately so old node weights cannot leak across graphs.
+        self.metrics._step_count = self.metrics.update_frequency - 1
     
     def _update_topology_metrics(self):
         """Update cached topology metrics if needed."""
@@ -488,7 +503,7 @@ class TAdam(Adam):
                     self.edge_index, self.node_features, self.num_nodes,
                     self.combination_method
                 )
-            elif self.local_scaling == 'Only_TRFscale':
+            elif self.local_scaling in ('none', 'Only_TRFscale'):
                 self._node_weights = None
             else:
                 raise ValueError(f"Unknown local_scaling method: {self.local_scaling}")
@@ -519,7 +534,7 @@ class TAdam(Adam):
                     if p.grad is not None:
                         original_grads.append(p.grad.data.clone())
                         # Assuming gradient shape matches node weights for node embeddings
-                        if p.grad.shape[0] == self._node_weights.shape[0]:
+                        if p.grad.dim() > 0 and p.grad.shape[0] == self._node_weights.shape[0]:
                             # Apply node-wise scaling
                             if p.grad.dim() == 1:
                                 p.grad.data = p.grad.data * self._node_weights
@@ -613,7 +628,7 @@ def tadam(
     if node_weights is not None:
         scaled_grads = []
         for grad in grads:
-            if grad is not None and grad.shape[0] == node_weights.shape[0]:
+            if grad is not None and grad.dim() > 0 and grad.shape[0] == node_weights.shape[0]:
                 if grad.dim() == 1:
                     scaled_grads.append(grad * node_weights)
                 elif grad.dim() == 2:
@@ -651,67 +666,5 @@ def tadam(
     )
 
 
-# Documentation
-TAdam.__doc__ = r"""
-Implements TAdam (Topologically-informed Adam) algorithm for Graph Neural Networks.
-
-TAdam extends Adam with topology-aware learning rate scaling:
-
-1. **Global Scaling (TRF)**: Adjusts learning rate based on graph complexity
-   
-   .. math::
-      lr_{effective} = \frac{lr_{base}}{TRF(G)}
-   
-   where TRF (Topological Relevance Function) measures graph difficulty:
-   
-   .. math::
-      TRF(G) = 1 + \mu_G \times \sum_i w_i \cdot metric_i
-   
-2. **Local Scaling**: Node-wise gradient weighting based on:
-   - **Degree-based** (Anti-Hub): :math:`\phi_v = \frac{1}{\log(\deg(v) + e)}`
-   - **Homophily-based**: :math:`\phi_v = 1 + \tanh(H_v)`
-   - **Curvature-based**: :math:`\phi_v = e^{-\kappa_v}`
-
-Args:
-    params: iterable of parameters to optimize
-    lr (float, optional): base learning rate (default: 1e-3)
-    betas (Tuple[float, float], optional): coefficients for running averages (default: (0.9, 0.999))
-    eps (float, optional): numerical stability term (default: 1e-8)
-    weight_decay (float, optional): weight decay coefficient (default: 0)
-    amsgrad (bool, optional): use AMSGrad variant (default: False)
-    graph_data (tuple or dict, optional): graph structure information
-    trf_weights (dict, optional): weights for TRF components
-    local_scaling (str, optional): type of node-wise scaling
-    topology_update_freq (int, optional): steps between metric updates
-    adaptive_frequency (bool, optional): adapt frequency to graph size
-    
-Example:
-    >>> import torch
-    >>> from torch_geometric.data import Data
-    >>> 
-    >>> # Create graph data
-    >>> edge_index = torch.tensor([[0, 1, 1, 2], [1, 0, 2, 1]], dtype=torch.long)
-    >>> num_nodes = 3
-    >>> 
-    >>> # Initialize model and optimizer
-    >>> model = GNN(in_channels=16, out_channels=10)
-    >>> optimizer = TAdam(
-    ...     model.parameters(),
-    ...     lr=0.01,
-    ...     graph_data=(edge_index, num_nodes),
-    ...     local_scaling='degree',
-    ...     topology_update_freq=10
-    ... )
-    >>> 
-    >>> # Training loop
-    >>> for epoch in range(100):
-    ...     optimizer.zero_grad()
-    ...     loss = compute_loss(model, data)
-    ...     loss.backward()
-    ...     optimizer.step()
-
-References:
-    - Adam: A Method for Stochastic Optimization (Kingma & Ba, 2014)
-    - Graph Neural Networks (overview): https://arxiv.org/abs/1901.00596
-    - Ollivier-Ricci Curvature: https://arxiv.org/abs/1712.02943
-"""
+# The class docstring describes the repository implementation; see README.md
+# for the explicit differences from the manuscript equations.

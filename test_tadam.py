@@ -1,5 +1,5 @@
 """
-Test suite and examples for TAdam optimizer.
+Legacy synthetic demonstration for TAdam (not the Cora benchmark).
 
 This script demonstrates:
 1. Basic usage with different scaling strategies
@@ -8,6 +8,7 @@ This script demonstrates:
 """
 
 import random
+from pathlib import Path
 import numpy as np
 import torch
 
@@ -273,7 +274,9 @@ def compare_optimizers(graph_data: Dict, num_trials: int = 3) -> Dict:
         trial_times = []
         
         for trial in range(num_trials):
-                       
+            # Paired initialization: same trial seed for each optimizer.
+            set_global_seed(2025 + trial)
+
             model = SimpleGNN(input_dim, hidden_dim, output_dim)
             
             # Create optimizer
@@ -324,6 +327,8 @@ def compare_optimizers(graph_data: Dict, num_trials: int = 3) -> Dict:
 
 def visualize_results(all_results: Dict[str, Dict], save_path: Optional[str] = None):
     """Visualize comparison results across different graphs."""
+    figure_dir = Path(save_path).parent if save_path else Path('figs')
+    figure_dir.mkdir(parents=True, exist_ok=True)
     
     num_graphs = len(all_results)
     fig, axes = plt.subplots(2, 3, figsize=(12, 8))
@@ -373,7 +378,7 @@ def visualize_results(all_results: Dict[str, Dict], save_path: Optional[str] = N
         plt.yscale('log')
         plt.title(graph_name)
         plt.legend(loc='upper right', fontsize=6)
-        plt.savefig(f"tadam_fig{idx+1}.png", dpi=150, bbox_inches='tight')
+        plt.savefig(figure_dir / f"tadam_fig{idx+1}.png", dpi=150, bbox_inches='tight')
         plt.close()
     # -------------------------------------
     
@@ -474,80 +479,86 @@ def analyze_trf_values():
             'Nodes': num_nodes,
             'Edges': num_edges,
             'TRF': trf,
-            'LR Scale': 1.0 / trf
+            'LR Scale': 0.01 + 0.99 ** (-(trf - 1))
         })
         
         print(f"\n{graph['name']}:")
         print(f"  Nodes: {num_nodes}, Edges: {num_edges}")
         print(f"  TRF: {trf:.4f}")
-        print(f"  Effective LR multiplier: {1.0/trf:.4f}")
+        print(f"  Effective LR multiplier: {0.01 + 0.99 ** (-(trf - 1)):.4f}")
     
     return results
 
 
 
-"""Main test function."""
-print("="*60)
-print("TAdam Optimizer Test Suite")
-print("="*60)
+def main():
+    set_global_seed(2025)
 
-# 1. Test TRF computation
-print("\n1. Analyzing TRF values...")
-trf_results = analyze_trf_values()
+    print("="*60)
+    print("TAdam Optimizer Test Suite")
+    print("="*60)
 
-# 2. Test basic functionality
-print("\n2. Testing basic functionality...")
-graphs = create_test_graphs()
-test_graph = graphs[0]  # Use complete graph
+    # 1. Test TRF computation
+    print("\n1. Analyzing TRF values...")
+    trf_results = analyze_trf_values()
 
-model = SimpleGNN(
-    input_dim=test_graph['features'].shape[1],
-    hidden_dim=32,
-    output_dim=test_graph['labels'].max().item() + 1
-)
+    # 2. Test basic functionality
+    print("\n2. Testing basic functionality...")
+    graphs = create_test_graphs()
+    test_graph = graphs[0]  # Use complete graph
 
-optimizer = TAdam(
-    model.parameters(),
-    lr=0.01,
-    graph_data=(test_graph['edge_index'], test_graph['num_nodes']),
-    local_scaling='degree'
-)
+    model = SimpleGNN(
+        input_dim=test_graph['features'].shape[1],
+        hidden_dim=32,
+        output_dim=test_graph['labels'].max().item() + 1
+    )
 
-print("  TAdam initialized successfully!")
-print(f"  Number of parameter groups: {len(optimizer.param_groups)}")
+    optimizer = TAdam(
+        model.parameters(),
+        lr=0.01,
+        graph_data=(test_graph['edge_index'], test_graph['num_nodes']),
+        local_scaling='degree'
+    )
 
-# 3. Compare optimizers on different graphs
-print("\n3. Comparing optimizers on different graph topologies...")
-all_results = {}
+    print("  TAdam initialized successfully!")
+    print(f"  Number of parameter groups: {len(optimizer.param_groups)}")
 
-for graph in graphs[:6]:  # Test on first 3 graphs to save time
-    print(f"\n{'='*40}")
-    print(f"Graph: {graph['name']}")
-    print(f"{'='*40}")
-    
-    results = compare_optimizers(graph, num_trials=2)
-    all_results[graph['name']] = results
+    # 3. Compare optimizers on different graphs
+    print("\n3. Comparing optimizers on different graph topologies...")
+    all_results = {}
 
-# 4. Visualize results
-print("\n4. Visualizing results...")
-visualize_results(all_results, save_path='tadam_comparison.png')
+    for graph in graphs[:6]:  # Test on first 3 graphs to save time
+        print(f"\n{'='*40}")
+        print(f"Graph: {graph['name']}")
+        print(f"{'='*40}")
 
-# 5. Test dynamic graphs
-test_dynamic_graph()
+        results = compare_optimizers(graph, num_trials=2)
+        all_results[graph['name']] = results
 
-# 6. Summary
-print("\n" + "="*60)
-print("Test Summary")
-print("="*60)
+    # 4. Visualize results
+    print("\n4. Visualizing results...")
+    visualize_results(all_results, save_path='figs/tadam_comparison.png')
 
-print("\nBest performing configurations by graph:")
-for graph_name, results in all_results.items():
-    best_config = min(results.items(), key=lambda x: x[1]['final_loss'])
-    print(f"\n{graph_name}:")
-    print(f"  Best: {best_config[0]}")
-    print(f"  Final loss: {best_config[1]['final_loss']:.4f}")
-    # print(f"  Speedup vs Adam: {results['Adam']['time']/best_config[1]['time']:.2f}x")
+    # 5. Test dynamic graphs
+    test_dynamic_graph()
 
-print("\n✅ All tests completed successfully!")
+    # 6. Summary
+    print("\n" + "="*60)
+    print("Test Summary")
+    print("="*60)
+
+    print("\nBest performing configurations by graph:")
+    for graph_name, results in all_results.items():
+        best_config = min(results.items(), key=lambda x: x[1]['final_loss'])
+        print(f"\n{graph_name}:")
+        print(f"  Best: {best_config[0]}")
+        print(f"  Final loss: {best_config[1]['final_loss']:.4f}")
+        # print(f"  Speedup vs Adam: {results['Adam']['time']/best_config[1]['time']:.2f}x")
+
+    print("\nAll demonstrations completed.")
 
 
+
+
+if __name__ == "__main__":
+    main()
